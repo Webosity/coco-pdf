@@ -1,6 +1,6 @@
 ; Inno Setup script. Build after PyInstaller: iscc installer.iss  ->  dist\CocoPDF-Setup-<version>.exe
 #define AppName "Coco PDF"
-#define AppVersion "0.2.0"
+#define AppVersion "0.3.0"
 #define AppExe "CocoPDF.exe"
 
 [Setup]

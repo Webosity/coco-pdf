@@ -14,15 +14,19 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QStyle,
     QToolBar,
+    QToolButton,
     QWidget,
 )
 
 from . import __version__, asset
 from .document import PdfDocument
 from .editing import PDF_FILTER, EditingMixin
+from .icons import icon
+from .signatures import SignatureStore
 from .thumbnails import ThumbnailList
 from .viewer import PageView
 
@@ -34,6 +38,7 @@ class MainWindow(EditingMixin, QMainWindow):
         super().__init__()
         self.pdf: PdfDocument | None = None
         self.settings = QSettings("Digital Rhapsody", "Coco PDF")
+        self.signatures = SignatureStore()
         self.search_hits: list[tuple[int, pymupdf.Rect]] = []
         self.search_pos = -1
 
@@ -121,15 +126,22 @@ class MainWindow(EditingMixin, QMainWindow):
 
         tools_menu = bar.addMenu("&Outils")
         self.mode_group = QActionGroup(self)
+        # Optional: while a signature is being placed, no mode button is lit.
+        self.mode_group.setExclusionPolicy(QActionGroup.ExclusionPolicy.ExclusiveOptional)
         self.mode_actions = []
         for mode, text, key in (("view", "&Lecture", "Ctrl+L"), ("edit", "&Modifier", "Ctrl+E"),
                                 ("add_text", "&Ajouter du texte", "Ctrl+T"),
                                 ("add_image", "Ajouter une &image", "Ctrl+Shift+I")):
             action = self._action(tools_menu, text, lambda _=False, m=mode: self.set_mode(m), key)
+            action.setIcon(icon(mode))
             action.setCheckable(True)
             action.setChecked(mode == "view")
             self.mode_group.addAction(action)
             self.mode_actions.append(action)
+        self.signature_menu = QMenu("&Signature", self)
+        self.signature_menu.setIcon(icon("signature"))
+        self.signature_menu.aboutToShow.connect(self.fill_signature_menu)
+        tools_menu.addMenu(self.signature_menu)
         tools_menu.addSeparator()
         self._action(tools_menu, "Remplir le &formulaire…", self.fill_form)
         self._action(tools_menu, "Reconnaissance de texte (&OCR)…", self.run_ocr)
@@ -145,6 +157,11 @@ class MainWindow(EditingMixin, QMainWindow):
         toolbar.addSeparator()
         for action in self.mode_actions:
             toolbar.addAction(action)
+        self.signature_button = QToolButton(text="Signature", icon=icon("signature"), toolTip="Insérer une signature")
+        self.signature_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.signature_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.signature_button.setMenu(self.signature_menu)
+        toolbar.addWidget(self.signature_button)
         toolbar.addSeparator()
         self.search_box = QLineEdit(placeholderText="Rechercher (Entrée)", clearButtonEnabled=True)
         self.search_box.setMaximumWidth(260)

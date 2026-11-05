@@ -12,14 +12,19 @@ from .dialogs import FormDialog
 from .document import tesseract_available
 from .pdf_images import ImageItem
 from .pdf_text import TextStyle
+from .signature_dialog import SignatureDialog, add_menu_entry
+from .signatures import Signature
 
 PDF_FILTER = "Documents PDF (*.pdf)"
 IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp)"
+SIGNATURE_WIDTH = 150  # pt (about 5 cm), adjustable afterwards with the handles
 
 
 class EditingMixin:
-    """Expects self.pdf, self.view, self.thumbs, self.mode_actions, self.after_change()
-    and self.after_structure_change()."""
+    """Expects self.pdf, self.view, self.thumbs, self.mode_actions, self.signatures, self.signature_menu,
+    self.after_change() and self.after_structure_change()."""
+
+    pending_signature: str | None = None
 
     # --- pages -------------------------------------------------------------
 
@@ -107,26 +112,56 @@ class EditingMixin:
 
     def on_page_clicked(self, index: int, point: pymupdf.Point) -> None:
         if self.view.mode == "add_image":
-            self.add_image_at(index, point)
+            path, _ = QFileDialog.getOpenFileName(self, "Insérer une image", "", IMAGE_FILTER)
+            if path:
+                self.place_image(index, point, path, max_width=self.pdf.page(index).rect.width / 3)
+        elif self.view.mode == "add_signature" and self.pending_signature:
+            self.place_image(index, point, self.pending_signature, max_width=SIGNATURE_WIDTH, centered=True)
 
-    def add_image_at(self, index: int, point: pymupdf.Point) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Insérer une image", "", IMAGE_FILTER)
-        if not path:
-            return
+    def place_image(self, index: int, point: pymupdf.Point, path: str, max_width: float,
+                    centered: bool = False) -> None:
         size = QImageReader(path).size()
         if not size.isValid():
             QMessageBox.warning(self, "Image", "Image illisible.")
             return
         page = self.pdf.page(index)
-        width = min(size.width() * 0.75, page.rect.width / 3)  # 96 dpi pixels -> points, capped
+        width = min(size.width() * 0.75, max_width)  # 96 dpi pixels -> points, capped
         height = width * size.height() / size.width()
-        top_left = point * page.rotation_matrix  # screen (rotated) space
-        item = self.pdf.add_image(index, pymupdf.Rect(top_left, top_left + (width, height)), path)
+        anchor = point * page.rotation_matrix  # screen (rotated) space
+        if centered:
+            anchor -= (width / 2, height / 2)
+        item = self.pdf.add_image(index, pymupdf.Rect(anchor, anchor + (width, height)), path)
         self.after_change(index)
         # Switch to edit mode with the new image selected, ready to be moved or resized.
         self.mode_actions[1].trigger()
         if item is not None:
             self.view.select_image(item)
+
+    # --- signatures --------------------------------------------------------
+
+    def fill_signature_menu(self) -> None:
+        menu = self.signature_menu
+        menu.clear()
+        for signature in self.signatures.list():
+            add_menu_entry(menu, self.signatures, signature, lambda _=False, s=signature: self.start_signature(s))
+        if not menu.isEmpty():
+            menu.addSeparator()
+        menu.addAction("Gérer mes signatures…", self.manage_signatures)
+
+    def manage_signatures(self) -> None:
+        dialog = SignatureDialog(self, self.signatures)
+        dialog.insert_requested.connect(self.start_signature)
+        dialog.exec()
+
+    def start_signature(self, signature: Signature) -> None:
+        if self.pdf is None:
+            self.statusBar().showMessage("Ouvre d'abord un PDF pour y placer une signature", 5000)
+            return
+        self.pending_signature = str(self.signatures.path(signature))
+        if self.mode_group.checkedAction():
+            self.mode_group.checkedAction().setChecked(False)
+        self.view.set_mode("add_signature")
+        self.statusBar().showMessage(f"Clique où placer « {signature.name} »")
 
     # --- forms and OCR -----------------------------------------------------
 

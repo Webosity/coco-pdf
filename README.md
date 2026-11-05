@@ -11,6 +11,7 @@ Lecteur et éditeur PDF pour Windows 10/11 (Python, PySide6, PyMuPDF).
   - clic sur une image : poignées pour la déplacer, la redimensionner (proportions gardées aux coins, Maj pour les libérer) et la faire pivoter à n'importe quel angle (Maj : crans de 15°), boutons ±90°, remise à 0° et suppression (Suppr).
 - **Police d'origine conservée** : les polices intégrées aux PDF ne contiennent en général que les caractères déjà utilisés. Coco PDF retrouve donc la police complète installée sur Windows (`Calibri`, `Arial-BoldMT`, etc.) et ne garde à l'enregistrement que les caractères utilisés. Si la police n'est pas installée, la barre l'indique et une police standard proche est utilisée.
 - **Ajouts** : texte libre (Ctrl+T), image (Ctrl+Maj+I), sélectionnée dès sa pose.
+- **Signatures** : bouton « Signature » → banque d'images conservée sur le PC (`%LOCALAPPDATA%\Coco PDF\signatures`), par exemple « Signature simple », « Bon pour accord », « Lu et approuvé ». À l'import, le fond blanc d'une signature scannée ou photographiée devient transparent et l'image est recadrée. On choisit une signature, on clique sur la page, puis on l'ajuste avec les poignées.
 - **Formulaires** : remplissage des champs texte, cases, listes.
 - **Compression** : « Enregistrer une copie compressée » (images rééchantillonnées à 150 dpi, flux compressés).
 - **OCR** : ajoute une couche de texte invisible et cherchable. Nécessite Tesseract (`winget install UB-Mannheim.TesseractOCR`, avec la langue française).
