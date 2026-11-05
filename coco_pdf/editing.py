@@ -8,17 +8,18 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImageReader
 from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox
 
-from .dialogs import FormDialog, TextDialog
-from .document import TextStyle, tesseract_available
+from .dialogs import FormDialog
+from .document import tesseract_available
+from .pdf_images import ImageItem
+from .pdf_text import TextStyle
 
 PDF_FILTER = "Documents PDF (*.pdf)"
 IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp)"
 
 
 class EditingMixin:
-    """Expects self.pdf, self.view, self.thumbs, self.after_change() and self.after_structure_change()."""
-
-    last_style = TextStyle()
+    """Expects self.pdf, self.view, self.thumbs, self.mode_actions, self.after_change()
+    and self.after_structure_change()."""
 
     # --- pages -------------------------------------------------------------
 
@@ -74,29 +75,39 @@ class EditingMixin:
             files = self.pdf.split(folder, every)
             self.statusBar().showMessage(f"{len(files)} fichier(s) créé(s) dans {folder}", 6000)
 
-    # --- clicks on a page --------------------------------------------------
+    # --- in-place text and image edits (signals from the page view) ------
+
+    def on_text_edited(self, index: int, block, screen_rect: pymupdf.Rect, text: str, style: TextStyle) -> None:
+        try:
+            if block is None:
+                if not text.strip():
+                    return
+                self.view.new_text_style = style
+                self.pdf.add_text_box(index, screen_rect, text, style)
+            else:
+                self.pdf.replace_block(block, text, style)
+        except (RuntimeError, ValueError) as error:
+            QMessageBox.warning(self, "Texte", f"Modification impossible : {error}")
+            return
+        self.after_change(index)
+
+    def on_image_edited(self, item: ImageItem, new: ImageItem | None) -> None:
+        try:
+            if new is None:
+                self.pdf.delete_image(item)
+                current = None
+            else:
+                current = self.pdf.move_image(item, new)
+        except (RuntimeError, ValueError) as error:
+            QMessageBox.warning(self, "Image", f"Modification impossible : {error}")
+            return
+        self.after_change(item.page)
+        if current is not None:
+            self.view.select_image(current)  # keep it selected for the next adjustment
 
     def on_page_clicked(self, index: int, point: pymupdf.Point) -> None:
-        handlers = {"edit_text": self.edit_text_at, "add_text": self.add_text_at, "add_image": self.add_image_at}
-        if self.view.mode in handlers:
-            handlers[self.view.mode](index, point)
-
-    def edit_text_at(self, index: int, point: pymupdf.Point) -> None:
-        span = self.pdf.span_at(index, point)
-        if span is None:
-            self.statusBar().showMessage("Aucun texte modifiable à cet endroit", 4000)
-            return
-        dialog = TextDialog(self, "Modifier le texte", span.text, span.style, multiline=False)
-        if dialog.exec():
-            self.pdf.replace_span(span, dialog.text(), dialog.style())
-            self.after_change(index)
-
-    def add_text_at(self, index: int, point: pymupdf.Point) -> None:
-        dialog = TextDialog(self, "Ajouter du texte", "", self.last_style, multiline=True)
-        if dialog.exec() and dialog.text().strip():
-            EditingMixin.last_style = dialog.style()
-            self.pdf.add_text(index, point, dialog.text(), dialog.style())
-            self.after_change(index)
+        if self.view.mode == "add_image":
+            self.add_image_at(index, point)
 
     def add_image_at(self, index: int, point: pymupdf.Point) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Insérer une image", "", IMAGE_FILTER)
@@ -110,9 +121,12 @@ class EditingMixin:
         width = min(size.width() * 0.75, page.rect.width / 3)  # 96 dpi pixels -> points, capped
         height = width * size.height() / size.width()
         top_left = point * page.rotation_matrix  # screen (rotated) space
-        rect = pymupdf.Rect(top_left, top_left + (width, height)) * page.derotation_matrix
-        self.pdf.add_image(index, rect, path)
+        item = self.pdf.add_image(index, pymupdf.Rect(top_left, top_left + (width, height)), path)
         self.after_change(index)
+        # Switch to edit mode with the new image selected, ready to be moved or resized.
+        self.mode_actions[1].trigger()
+        if item is not None:
+            self.view.select_image(item)
 
     # --- forms and OCR -----------------------------------------------------
 

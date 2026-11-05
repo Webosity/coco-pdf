@@ -1,14 +1,19 @@
-"""Continuous-scroll page view. Pages are rendered lazily when they get painted."""
+"""Continuous-scroll page view. Pages are rendered lazily when painted; editing overlays sit on top of them."""
 from __future__ import annotations
 
 import pymupdf
-from PySide6.QtCore import QPoint, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from .document import PdfDocument
+from .image_handles import ImageSelection
+from .pdf_text import TextStyle
+from .text_editor import InlineTextEditor
 
 PAGE_GAP = 12
+NEW_TEXT_WIDTH = 250  # pt
+UNIT_SQUARE = [pymupdf.Point(0, 0), pymupdf.Point(1, 0), pymupdf.Point(1, 1), pymupdf.Point(0, 1)]
 
 
 def render(page: pymupdf.Page, zoom: float) -> QPixmap:
@@ -26,7 +31,7 @@ class PageWidget(QWidget):
         self.index = index
         self.pixmap: QPixmap | None = None
         self.highlights: list[pymupdf.Rect] = []
-        self.hover_rect: pymupdf.Rect | None = None
+        self.hover: list[pymupdf.Point] | None = None  # outline of the text block or image under the mouse
         self.setMouseTracking(True)
         self.resize_to_page()
 
@@ -38,9 +43,13 @@ class PageWidget(QWidget):
         self.setFixedSize(int(rect.width * self.view.zoom), int(rect.height * self.view.zoom))
         self.pixmap = None
 
-    def to_page_point(self, pos: QPoint) -> pymupdf.Point:
+    def to_page_point(self, pos: QPoint | QPointF) -> pymupdf.Point:
         zoom = self.view.zoom
         return pymupdf.Point(pos.x() / zoom, pos.y() / zoom) * self.page().derotation_matrix
+
+    def to_screen(self, point: pymupdf.Point) -> QPointF:
+        p = point * self.page().rotation_matrix * self.view.zoom
+        return QPointF(p.x, p.y)
 
     def to_screen_rect(self, rect: pymupdf.Rect) -> QRectF:
         r = rect * self.page().rotation_matrix * self.view.zoom
@@ -55,39 +64,56 @@ class PageWidget(QWidget):
         painter.setBrush(QColor(255, 200, 0, 90))
         for rect in self.highlights:
             painter.drawRect(self.to_screen_rect(rect))
-        if self.hover_rect is not None:
+        if self.hover:
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QColor(30, 120, 255))
-            painter.drawRect(self.to_screen_rect(self.hover_rect))
+            painter.setPen(QPen(QColor(30, 120, 255), 1, Qt.PenStyle.DashLine))
+            painter.drawPolygon(QPolygonF([self.to_screen(p) for p in self.hover]))
+
+    def _shape_under(self, point: pymupdf.Point) -> list[pymupdf.Point] | None:
+        pdf = self.view.pdf
+        block = pdf.block_at(self.index, point)
+        if block:
+            r = block.bbox + (-2, -2, 2, 2)
+            return [r.tl, r.tr, r.br, r.bl]
+        image = pdf.image_at(self.index, point)
+        if image:
+            m = image.matrix()
+            return [p * m for p in UNIT_SQUARE]
+        return None
 
     def mouseMoveEvent(self, event) -> None:
-        rect = None
-        if self.view.mode == "edit_text":
-            span = self.view.pdf.span_at(self.index, self.to_page_point(event.position().toPoint()))
-            rect = span.bbox if span else None
-        if rect != self.hover_rect:
-            self.hover_rect = rect
+        shape = None
+        if self.view.mode == "edit" and not self.view.busy():
+            shape = self._shape_under(self.to_page_point(event.position()))
+        if shape != self.hover:
+            self.hover = shape
             self.update()
 
     def leaveEvent(self, event) -> None:
-        self.hover_rect = None
-        self.update()
+        if self.hover:
+            self.hover = None
+            self.update()
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self.index, self.to_page_point(event.position().toPoint()))
+            self.clicked.emit(self.index, self.to_page_point(event.position()))
 
 
 class PageView(QScrollArea):
-    page_clicked = Signal(int, object)
+    page_clicked = Signal(int, object)  # click not handled by the view itself (e.g. "add image" mode)
     current_page_changed = Signal(int)
+    text_edited = Signal(int, object, object, str, object)  # page, TextBlock | None, screen rect (pt), text, style
+    image_edited = Signal(object, object)  # old ImageItem, new ImageItem or None to delete
 
     def __init__(self):
         super().__init__()
         self.pdf: PdfDocument | None = None
         self.zoom = 1.25
         self.mode = "view"
+        self.new_text_style = TextStyle()
         self.pages: list[PageWidget] = []
+        self.text_session: InlineTextEditor | None = None
+        self.image_session: ImageSelection | None = None
         self.setWidgetResizable(True)
         self.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.setStyleSheet("QScrollArea { background: #525659; }")
@@ -99,6 +125,7 @@ class PageView(QScrollArea):
 
     def rebuild(self) -> None:
         """Recreate page widgets (after page count, order or rotation changes)."""
+        self.close_overlays(commit=False)
         container = QWidget()
         container.setStyleSheet("background: #525659;")
         layout = QVBoxLayout(container)
@@ -108,7 +135,7 @@ class PageView(QScrollArea):
         if self.pdf:
             for i in range(self.pdf.page_count):
                 widget = PageWidget(self, i)
-                widget.clicked.connect(self.page_clicked)
+                widget.clicked.connect(self.on_page_clicked)
                 layout.addWidget(widget, alignment=Qt.AlignmentFlag.AlignHCenter)
                 self.pages.append(widget)
         self.setWidget(container)
@@ -118,7 +145,76 @@ class PageView(QScrollArea):
             self.pages[index].resize_to_page()
             self.pages[index].update()
 
+    # --- editing overlays --------------------------------------------------
+
+    def busy(self) -> bool:
+        return self.text_session is not None or self.image_session is not None
+
+    def close_overlays(self, commit: bool = True) -> None:
+        if self.text_session:
+            session, self.text_session = self.text_session, None
+            session.commit() if commit else session.cancel()
+        if self.image_session:
+            session, self.image_session = self.image_session, None
+            session.hide()  # now: deleteLater only runs once control is back in the event loop
+            session.deleteLater()
+
+    def on_page_clicked(self, index: int, point: pymupdf.Point) -> None:
+        if self.busy():
+            self.close_overlays()  # a click outside the editor validates it
+            return
+        widget = self.pages[index]
+        widget.hover = None
+        if self.mode == "edit":
+            block = self.pdf.block_at(index, point)
+            image = None if block else self.pdf.image_at(index, point)
+            if block:
+                self._start_text(widget, widget.to_screen_rect(block.bbox), block, block.text, block.style)
+            elif image:
+                self.select_image(image)
+        elif self.mode == "add_text":
+            top_left = point * widget.page().rotation_matrix
+            width = max(40.0, min(NEW_TEXT_WIDTH, widget.page().rect.width - top_left.x - 10))
+            rect = QRectF(top_left.x * self.zoom, top_left.y * self.zoom, width * self.zoom, 0)
+            self._start_text(widget, rect, None, "", self.new_text_style)
+        else:
+            self.page_clicked.emit(index, point)
+
+    def _start_text(self, widget: PageWidget, rect: QRectF, block, text: str, style: TextStyle) -> None:
+        session = InlineTextEditor(widget, rect.adjusted(-1, -1, 1, 1), text, style, self.zoom)
+
+        def done(new_text: str, new_style: TextStyle) -> None:
+            self.text_session = None
+            g = session.editor.geometry()
+            screen = pymupdf.Rect(g.x(), g.y(), g.x() + g.width(), g.y() + g.height()) / self.zoom
+            self.text_edited.emit(widget.index, block, screen, new_text, new_style)
+
+        session.committed.connect(done)
+        session.cancelled.connect(lambda: setattr(self, "text_session", None))
+        self.text_session = session
+
+    def select_image(self, item) -> None:
+        self.close_overlays()
+        widget = self.pages[item.page]
+        session = ImageSelection(widget, item, widget.page(), self.zoom)
+        session.changed.connect(lambda new: self.image_edited.emit(item, new))
+        session.deleted.connect(lambda: self._delete_image(item))
+        session.clicked_outside.connect(lambda pos: self._leave_image(widget, pos))
+        self.image_session = session
+
+    def _delete_image(self, item) -> None:
+        self.close_overlays()
+        self.image_edited.emit(item, None)
+
+    def _leave_image(self, widget: PageWidget, pos: QPointF) -> None:
+        self.close_overlays()
+        if pos.x() >= 0:  # forward the click, so another block or image can be picked at once
+            self.on_page_clicked(widget.index, widget.to_page_point(pos))
+
+    # --- view --------------------------------------------------------------
+
     def set_zoom(self, zoom: float) -> None:
+        self.close_overlays()
         current = self.current_page()
         self.zoom = max(0.25, min(zoom, 6.0))
         for widget in self.pages:
@@ -132,13 +228,12 @@ class PageView(QScrollArea):
             self.set_zoom(available / self.pages[self.current_page()].page().rect.width)
 
     def set_mode(self, mode: str) -> None:
+        self.close_overlays()
         self.mode = mode
-        cursor = Qt.CursorShape.ArrowCursor if mode == "view" else Qt.CursorShape.CrossCursor
-        if mode == "edit_text":
-            cursor = Qt.CursorShape.IBeamCursor
+        cursors = {"view": Qt.CursorShape.ArrowCursor, "edit": Qt.CursorShape.IBeamCursor}
         for widget in self.pages:
-            widget.setCursor(cursor)
-            widget.hover_rect = None
+            widget.setCursor(cursors.get(mode, Qt.CursorShape.CrossCursor))
+            widget.hover = None
 
     def set_highlights(self, hits: dict[int, list[pymupdf.Rect]]) -> None:
         for widget in self.pages:

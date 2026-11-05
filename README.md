@@ -6,8 +6,11 @@ Lecteur et éditeur PDF pour Windows 10/11 (Python, PySide6, PyMuPDF).
 
 - **Lecture** : défilement continu, miniatures, zoom (Ctrl+molette), recherche (Ctrl+F, F3), aller à la page (Ctrl+G), impression, glisser-déposer d'un PDF, fichiers récents, PDF protégés par mot de passe.
 - **Pages** : pivoter, supprimer, réordonner par glisser-déposer des miniatures, insérer une page blanche, insérer/fusionner d'autres PDF, extraire, découper.
-- **Texte existant** (Ctrl+E) : clic sur un texte → nouveau texte, taille, gras/italique, couleur. La police d'origine (souvent embarquée partiellement) est remplacée par la police standard la plus proche (Helvetica, Times, Courier).
-- **Ajouts** : texte libre (Ctrl+T), image (Ctrl+I).
+- **Mode Modifier** (Ctrl+E) :
+  - clic sur un paragraphe : il devient une zone de saisie posée sur la page, avec une barre flottante (police, taille, gras, italique, couleur, alignement). Ctrl+Entrée ou un clic ailleurs valide, Échap annule ;
+  - clic sur une image : poignées pour la déplacer, la redimensionner (proportions gardées aux coins, Maj pour les libérer) et la faire pivoter à n'importe quel angle (Maj : crans de 15°), boutons ±90°, remise à 0° et suppression (Suppr).
+- **Police d'origine conservée** : les polices intégrées aux PDF ne contiennent en général que les caractères déjà utilisés. Coco PDF retrouve donc la police complète installée sur Windows (`Calibri`, `Arial-BoldMT`, etc.) et ne garde à l'enregistrement que les caractères utilisés. Si la police n'est pas installée, la barre l'indique et une police standard proche est utilisée.
+- **Ajouts** : texte libre (Ctrl+T), image (Ctrl+Maj+I), sélectionnée dès sa pose.
 - **Formulaires** : remplissage des champs texte, cases, listes.
 - **Compression** : « Enregistrer une copie compressée » (images rééchantillonnées à 150 dpi, flux compressés).
 - **OCR** : ajoute une couche de texte invisible et cherchable. Nécessite Tesseract (`winget install UB-Mannheim.TesseractOCR`, avec la langue française).

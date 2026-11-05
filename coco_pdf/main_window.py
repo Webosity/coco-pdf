@@ -50,6 +50,8 @@ class MainWindow(EditingMixin, QMainWindow):
         self.statusBar().addPermanentWidget(self.page_label)
 
         self.view.page_clicked.connect(self.on_page_clicked)
+        self.view.text_edited.connect(self.on_text_edited)
+        self.view.image_edited.connect(self.on_image_edited)
         self.view.current_page_changed.connect(self.on_current_page)
         self.thumbs.page_selected.connect(self.view.go_to_page)
         self.thumbs.order_changed.connect(self.reorder)
@@ -120,8 +122,9 @@ class MainWindow(EditingMixin, QMainWindow):
         tools_menu = bar.addMenu("&Outils")
         self.mode_group = QActionGroup(self)
         self.mode_actions = []
-        for mode, text, key in (("view", "&Lecture", "Esc"), ("edit_text", "&Modifier le texte", "Ctrl+E"),
-                                ("add_text", "&Ajouter du texte", "Ctrl+T"), ("add_image", "Ajouter une &image", "Ctrl+I")):
+        for mode, text, key in (("view", "&Lecture", "Ctrl+L"), ("edit", "&Modifier", "Ctrl+E"),
+                                ("add_text", "&Ajouter du texte", "Ctrl+T"),
+                                ("add_image", "Ajouter une &image", "Ctrl+Shift+I")):
             action = self._action(tools_menu, text, lambda _=False, m=mode: self.set_mode(m), key)
             action.setCheckable(True)
             action.setChecked(mode == "view")
@@ -186,7 +189,10 @@ class MainWindow(EditingMixin, QMainWindow):
 
     def set_mode(self, mode: str) -> None:
         self.view.set_mode(mode)
-        hints = {"edit_text": "Clique sur un texte pour le modifier", "add_text": "Clique où placer le texte",
+        hints = {"edit": "Clique sur un paragraphe pour le modifier, ou sur une image pour la déplacer, "
+                         "la redimensionner ou la faire pivoter (Maj : rotation par 15°, coin sans garder les "
+                         "proportions)",
+                 "add_text": "Clique où placer le texte",
                  "add_image": "Clique où placer le coin haut-gauche de l'image"}
         self.statusBar().showMessage(hints.get(mode, ""))
 

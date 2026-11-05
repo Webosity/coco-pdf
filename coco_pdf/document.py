@@ -1,6 +1,6 @@
 """PDF model: a PyMuPDF document kept in memory, with undo/redo and editing operations.
 
-All coordinates are in unrotated PDF page space (the space used by get_text and insert_text).
+Coordinates are in unrotated PDF page space (the space of get_text / insert_text) unless named "screen".
 """
 from __future__ import annotations
 
@@ -9,36 +9,11 @@ from pathlib import Path
 
 import pymupdf
 
+from . import pdf_images, pdf_text
+from .pdf_images import ImageItem
+from .pdf_text import TextBlock, TextStyle
+
 MAX_UNDO = 30
-
-# Base-14 font short names indexed by family, then (bold, italic).
-BASE14 = {
-    "helv": {(False, False): "helv", (True, False): "hebo", (False, True): "heit", (True, True): "hebi"},
-    "tiro": {(False, False): "tiro", (True, False): "tibo", (False, True): "tiit", (True, True): "tibi"},
-    "cour": {(False, False): "cour", (True, False): "cobo", (False, True): "coit", (True, True): "cobi"},
-}
-
-
-@dataclass
-class TextStyle:
-    family: str = "helv"
-    size: float = 12.0
-    bold: bool = False
-    italic: bool = False
-    color: tuple[float, float, float] = (0.0, 0.0, 0.0)
-
-    @property
-    def fontname(self) -> str:
-        return BASE14[self.family][(self.bold, self.italic)]
-
-
-@dataclass
-class Span:
-    page: int
-    bbox: pymupdf.Rect
-    origin: pymupdf.Point
-    text: str
-    style: TextStyle
 
 
 @dataclass
@@ -52,26 +27,6 @@ class FormField:
     on_state: str
 
 
-def style_from_span(span: dict) -> TextStyle:
-    """Approximate the span's embedded font with a Base-14 font."""
-    name = span["font"].lower()
-    flags = span["flags"]
-    if flags & pymupdf.TEXT_FONT_MONOSPACED or "courier" in name or "mono" in name:
-        family = "cour"
-    elif flags & pymupdf.TEXT_FONT_SERIFED or "times" in name:
-        family = "tiro"
-    else:
-        family = "helv"
-    rgb = span["color"]
-    return TextStyle(
-        family=family,
-        size=round(span["size"], 1),
-        bold=bool(flags & pymupdf.TEXT_FONT_BOLD) or "bold" in name,
-        italic=bool(flags & pymupdf.TEXT_FONT_ITALIC) or "italic" in name or "oblique" in name,
-        color=((rgb >> 16 & 255) / 255, (rgb >> 8 & 255) / 255, (rgb & 255) / 255),
-    )
-
-
 class PdfDocument:
     def __init__(self, path: str | Path | None = None, password: str | None = None):
         self.path = Path(path) if path else None
@@ -81,12 +36,10 @@ class PdfDocument:
             raise PermissionError("Mot de passe incorrect")
         self._undo: list[bytes] = []
         self._redo: list[bytes] = []
-        self._spans: dict[int, list[Span]] = {}
+        self._blocks: dict[int, list[TextBlock]] = {}
+        self._images: dict[int, list[ImageItem]] = {}
+        self.fonts_added = False
         self.modified = False
-
-    @property
-    def needs_password(self) -> bool:
-        return self.doc.needs_pass and self.doc.is_encrypted
 
     @property
     def page_count(self) -> int:
@@ -102,7 +55,7 @@ class PdfDocument:
         self._undo.append(self.doc.tobytes())
         del self._undo[:-MAX_UNDO]
         self._redo.clear()
-        self._spans.clear()
+        self._forget_layout()
         self.modified = True
 
     def can_undo(self) -> bool:
@@ -122,8 +75,12 @@ class PdfDocument:
     def _restore(self, data: bytes) -> None:
         self.doc.close()
         self.doc = pymupdf.open("pdf", data)
-        self._spans.clear()
+        self._forget_layout()
         self.modified = True
+
+    def _forget_layout(self) -> None:
+        self._blocks.clear()
+        self._images.clear()
 
     # --- saving ------------------------------------------------------------
 
@@ -131,6 +88,12 @@ class PdfDocument:
         target = Path(path) if path else self.path
         if target is None:
             raise ValueError("Aucun chemin de sauvegarde")
+        if self.fonts_added:
+            # System fonts are embedded whole when inserted: keep only the glyphs used (1.8 MB -> ~50 KB).
+            try:
+                self.doc.subset_fonts()
+            except RuntimeError:
+                pass
         if compress:
             self.doc.rewrite_images(dpi_threshold=200, dpi_target=150, quality=75)
         data = self.doc.tobytes(garbage=4 if compress else 3, deflate=True, clean=compress,
@@ -187,48 +150,58 @@ class PdfDocument:
 
     # --- text --------------------------------------------------------------
 
-    def spans(self, page_index: int) -> list[Span]:
-        if page_index not in self._spans:
-            page = self.doc[page_index]
-            self._spans[page_index] = [
-                Span(page_index, pymupdf.Rect(s["bbox"]), pymupdf.Point(s["origin"]), s["text"], style_from_span(s))
-                for block in page.get_text("dict", flags=pymupdf.TEXTFLAGS_TEXT)["blocks"]
-                for line in block.get("lines", [])
-                for s in line["spans"]
-                if s["text"].strip()
-            ]
-        return self._spans[page_index]
+    def blocks(self, page_index: int) -> list[TextBlock]:
+        if page_index not in self._blocks:
+            self._blocks[page_index] = pdf_text.extract_blocks(self.doc[page_index])
+        return self._blocks[page_index]
 
-    def span_at(self, page_index: int, point: pymupdf.Point) -> Span | None:
-        return next((s for s in self.spans(page_index) if s.bbox.contains(point)), None)
+    def block_at(self, page_index: int, point: pymupdf.Point) -> TextBlock | None:
+        return next((b for b in self.blocks(page_index) if b.bbox.contains(point)), None)
 
-    def replace_span(self, span: Span, new_text: str, style: TextStyle) -> None:
+    def replace_block(self, block: TextBlock, text: str, style: TextStyle) -> None:
         self.checkpoint()
-        page = self.doc[span.page]
-        # Shrink the area so the characters of neighbouring spans and lines are not erased.
-        h = span.bbox.height
-        area = pymupdf.Rect(span.bbox.x0 + 0.5, span.bbox.y0 + h * 0.2, span.bbox.x1 - 0.5, span.bbox.y1 - h * 0.2)
-        page.add_redact_annot(area, fill=False)
-        page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE, graphics=pymupdf.PDF_REDACT_LINE_ART_NONE)
-        if new_text:
-            page.insert_text(span.origin, new_text, fontname=style.fontname, fontsize=style.size, color=style.color)
+        pdf_text.replace_block(self.doc[block.page], block, text, style)
+        self.fonts_added = True
 
-    def add_text(self, page_index: int, point: pymupdf.Point, text: str, style: TextStyle) -> None:
+    def add_text_box(self, page_index: int, screen_rect: pymupdf.Rect, text: str, style: TextStyle) -> None:
         self.checkpoint()
-        page = self.doc[page_index]
-        # point is the on-screen top-left of the first line; insert_text expects the baseline.
-        top_left = point * page.rotation_matrix
-        baseline = pymupdf.Point(top_left.x, top_left.y + style.size) * page.derotation_matrix
-        page.insert_text(baseline, text, fontname=style.fontname, fontsize=style.size,
-                         color=style.color, rotate=page.rotation)
-
-    def add_image(self, page_index: int, rect: pymupdf.Rect, image_path: str | Path) -> None:
-        self.checkpoint()
-        page = self.doc[page_index]
-        page.insert_image(rect, filename=str(image_path), keep_proportion=True, rotate=page.rotation)
+        pdf_text.add_box(self.doc[page_index], screen_rect, text, style)
+        self.fonts_added = True
 
     def search(self, page_index: int, needle: str) -> list[pymupdf.Rect]:
         return self.doc[page_index].search_for(needle) if needle else []
+
+    # --- images ------------------------------------------------------------
+
+    def images(self, page_index: int) -> list[ImageItem]:
+        if page_index not in self._images:
+            self._images[page_index] = pdf_images.list_images(self.doc[page_index])
+        return self._images[page_index]
+
+    def image_at(self, page_index: int, point: pymupdf.Point) -> ImageItem | None:
+        # Topmost first.
+        return next((i for i in reversed(self.images(page_index)) if i.contains(point)), None)
+
+    def add_image(self, page_index: int, screen_rect: pymupdf.Rect, image_path: str | Path) -> ImageItem | None:
+        """Insert an image and return it so it can be selected right away."""
+        self.checkpoint()
+        page = self.doc[page_index]
+        pdf_images.insert(page, screen_rect, str(image_path))
+        r = pymupdf.Rect(screen_rect)
+        center = pymupdf.Point((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2) * page.derotation_matrix
+        hits = [i for i in self.images(page_index) if i.contains(center)]
+        return hits[-1] if hits else None
+
+    def move_image(self, item: ImageItem, new: ImageItem) -> ImageItem:
+        """Apply new geometry; returns the item as it now stands (topmost placement)."""
+        self.checkpoint()
+        pdf_images.place(self.doc[item.page], item, new)
+        same = [i for i in self.images(item.page) if i.xref == item.xref]
+        return same[-1]
+
+    def delete_image(self, item: ImageItem) -> None:
+        self.checkpoint()
+        pdf_images.remove(self.doc[item.page], item)
 
     # --- forms -------------------------------------------------------------
 

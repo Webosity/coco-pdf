@@ -1,7 +1,8 @@
 import pymupdf
 import pytest
 
-from coco_pdf.document import PdfDocument, TextStyle
+from coco_pdf.document import PdfDocument
+from coco_pdf.pdf_text import TextStyle
 
 
 @pytest.fixture
@@ -22,14 +23,6 @@ def sample(tmp_path):
 
 def page_texts(pdf):
     return [pdf.page(i).get_text().strip() for i in range(pdf.page_count)]
-
-
-def test_replace_span_with_new_text_keeps_style(sample):
-    pdf = PdfDocument(sample)
-    span = pdf.span_at(0, pymupdf.Point(80, 95))
-    assert (span.text, span.style.family, span.style.bold) == ("Page 1 Bonjour", "tiro", True)
-    pdf.replace_span(span, "Page 1 Au revoir", span.style)
-    assert pdf.page(0).get_text().strip() == "Page 1 Au revoir"
 
 
 def test_undo_after_delete_restores_page(sample):
@@ -78,7 +71,7 @@ def test_split_every_two_pages_creates_two_files(sample, tmp_path):
 
 def test_save_overwrites_opened_file(sample):
     pdf = PdfDocument(sample)
-    pdf.add_text(0, pymupdf.Point(72, 300), "Ajout", TextStyle())
+    pdf.add_text_box(0, pymupdf.Rect(72, 300, 300, 320), "Ajout", TextStyle())
     pdf.save()
     assert "Ajout" in pymupdf.open(sample)[0].get_text()
 
