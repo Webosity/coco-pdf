@@ -32,6 +32,7 @@ class PageWidget(QWidget):
         self.pixmap: QPixmap | None = None
         self.highlights: list[pymupdf.Rect] = []
         self.hover: list[pymupdf.Point] | None = None  # outline of the text block or image under the mouse
+        self.mask: pymupdf.Rect | None = None  # paragraph being edited: hidden, as the editor may be moved away
         self.setMouseTracking(True)
         self.resize_to_page()
 
@@ -60,6 +61,8 @@ class PageWidget(QWidget):
             self.pixmap = render(self.page(), self.view.zoom)
         painter = QPainter(self)
         painter.drawPixmap(0, 0, self.pixmap)
+        if self.mask is not None:
+            painter.fillRect(self.to_screen_rect(self.mask), QColor("white"))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(255, 200, 0, 90))
         for rect in self.highlights:
@@ -98,11 +101,17 @@ class PageWidget(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.index, self.to_page_point(event.position()))
 
+    def contextMenuEvent(self, event) -> None:
+        self.view.close_overlays()
+        self.view.context_requested.emit(self.index, self.to_page_point(event.pos()), event.globalPos())
+
 
 class PageView(QScrollArea):
     page_clicked = Signal(int, object)  # click not handled by the view itself (e.g. "add image" mode)
     current_page_changed = Signal(int)
-    text_edited = Signal(int, object, object, str, object)  # page, TextBlock | None, screen rect (pt), text, style
+    # page, TextBlock | None, screen rect (pt), text, style, box moved or resized
+    text_edited = Signal(int, object, object, str, object, bool)
+    context_requested = Signal(int, object, QPoint)  # page, pymupdf.Point, global position
     image_edited = Signal(object, object)  # old ImageItem, new ImageItem or None to delete
 
     def __init__(self):
@@ -169,28 +178,47 @@ class PageView(QScrollArea):
             block = self.pdf.block_at(index, point)
             image = None if block else self.pdf.image_at(index, point)
             if block:
-                self._start_text(widget, widget.to_screen_rect(block.bbox), block, block.text, block.style)
+                self.edit_block(block)
             elif image:
                 self.select_image(image)
         elif self.mode == "add_text":
-            top_left = point * widget.page().rotation_matrix
-            width = max(40.0, min(NEW_TEXT_WIDTH, widget.page().rect.width - top_left.x - 10))
-            rect = QRectF(top_left.x * self.zoom, top_left.y * self.zoom, width * self.zoom, 0)
-            self._start_text(widget, rect, None, "", self.new_text_style)
+            self.new_text_at(index, point)
         else:
             self.page_clicked.emit(index, point)
 
+    def edit_block(self, block) -> None:
+        widget = self.pages[block.page]
+        self._start_text(widget, widget.to_screen_rect(block.bbox), block, block.text, block.style)
+
+    def new_text_at(self, index: int, point: pymupdf.Point, text: str = "", style: TextStyle | None = None) -> None:
+        self.close_overlays()
+        widget = self.pages[index]
+        top_left = point * widget.page().rotation_matrix
+        width = max(40.0, min(NEW_TEXT_WIDTH, widget.page().rect.width - top_left.x - 10))
+        rect = QRectF(top_left.x * self.zoom, top_left.y * self.zoom, width * self.zoom, 0)
+        self._start_text(widget, rect, None, text, style or self.new_text_style)
+        if text:
+            self.text_session.box_changed = True  # pasted text: validating must write it even if unchanged
+
     def _start_text(self, widget: PageWidget, rect: QRectF, block, text: str, style: TextStyle) -> None:
         session = InlineTextEditor(widget, rect.adjusted(-1, -1, 1, 1), text, style, self.zoom)
+        widget.mask = block.bbox if block else None
+        widget.update()
 
-        def done(new_text: str, new_style: TextStyle) -> None:
+        def unmask() -> None:
+            widget.mask = None
+            widget.update()
+
+        def done(new_text: str, new_style: TextStyle, moved: bool) -> None:
             self.text_session = None
+            unmask()
             g = session.editor.geometry()
             screen = pymupdf.Rect(g.x(), g.y(), g.x() + g.width(), g.y() + g.height()) / self.zoom
-            self.text_edited.emit(widget.index, block, screen, new_text, new_style)
+            self.text_edited.emit(widget.index, block, screen, new_text, new_style, moved)
 
         session.committed.connect(done)
         session.cancelled.connect(lambda: setattr(self, "text_session", None))
+        session.cancelled.connect(unmask)
         self.text_session = session
 
     def select_image(self, item) -> None:

@@ -158,10 +158,18 @@ class PdfDocument:
     def block_at(self, page_index: int, point: pymupdf.Point) -> TextBlock | None:
         return next((b for b in self.blocks(page_index) if b.bbox.contains(point)), None)
 
-    def replace_block(self, block: TextBlock, text: str, style: TextStyle) -> None:
+    def replace_block(self, block: TextBlock, text: str, style: TextStyle,
+                      screen_rect: pymupdf.Rect | None = None) -> None:
         self.checkpoint()
-        pdf_text.replace_block(self.doc[block.page], block, text, style)
+        pdf_text.replace_block(self.doc[block.page], block, text, style, screen_rect)
         self.fonts_added = True
+
+    def delete_block(self, block: TextBlock) -> None:
+        self.checkpoint()
+        pdf_text.erase(self.doc[block.page], block.bbox)
+
+    def image_png(self, item: ImageItem) -> bytes:
+        return pdf_images.png_bytes(self.doc, item.xref)
 
     def add_text_box(self, page_index: int, screen_rect: pymupdf.Rect, text: str, style: TextStyle) -> None:
         self.checkpoint()
@@ -182,11 +190,11 @@ class PdfDocument:
         # Topmost first.
         return next((i for i in reversed(self.images(page_index)) if i.contains(point)), None)
 
-    def add_image(self, page_index: int, screen_rect: pymupdf.Rect, image_path: str | Path) -> ImageItem | None:
-        """Insert an image and return it so it can be selected right away."""
+    def add_image(self, page_index: int, screen_rect: pymupdf.Rect, image: str | Path | bytes) -> ImageItem | None:
+        """Insert an image (file path or encoded bytes) and return it so it can be selected right away."""
         self.checkpoint()
         page = self.doc[page_index]
-        pdf_images.insert(page, screen_rect, str(image_path))
+        pdf_images.insert(page, screen_rect, image if isinstance(image, bytes) else str(image))
         r = pymupdf.Rect(screen_rect)
         center = pymupdf.Point((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2) * page.derotation_matrix
         hits = [i for i in self.images(page_index) if i.contains(center)]

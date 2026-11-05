@@ -25,6 +25,7 @@ class EditingMixin:
     self.after_change() and self.after_structure_change()."""
 
     pending_signature: str | None = None
+    image_filter = IMAGE_FILTER
 
     # --- pages -------------------------------------------------------------
 
@@ -82,7 +83,8 @@ class EditingMixin:
 
     # --- in-place text and image edits (signals from the page view) ------
 
-    def on_text_edited(self, index: int, block, screen_rect: pymupdf.Rect, text: str, style: TextStyle) -> None:
+    def on_text_edited(self, index: int, block, screen_rect: pymupdf.Rect, text: str, style: TextStyle,
+                       moved: bool) -> None:
         try:
             if block is None:
                 if not text.strip():
@@ -90,7 +92,7 @@ class EditingMixin:
                 self.view.new_text_style = style
                 self.pdf.add_text_box(index, screen_rect, text, style)
             else:
-                self.pdf.replace_block(block, text, style)
+                self.pdf.replace_block(block, text, style, screen_rect if moved else None)
         except (RuntimeError, ValueError) as error:
             QMessageBox.warning(self, "Texte", f"Modification impossible : {error}")
             return
@@ -124,29 +126,36 @@ class EditingMixin:
         if not size.isValid():
             QMessageBox.warning(self, "Image", "Image illisible.")
             return
-        page = self.pdf.page(index)
         width = min(size.width() * 0.75, max_width)  # 96 dpi pixels -> points, capped
-        height = width * size.height() / size.width()
-        anchor = point * page.rotation_matrix  # screen (rotated) space
+        self.place_image_bytes(index, point, path, width, width * size.height() / size.width(), centered)
+
+    def place_image_bytes(self, index: int, point: pymupdf.Point, image: str | bytes, width: float,
+                          height: float, centered: bool = False) -> None:
+        """Insert at point (top-left, or centre) with a size in points, then select it for adjustment."""
+        anchor = point * self.pdf.page(index).rotation_matrix  # screen (rotated) space
         if centered:
             anchor -= (width / 2, height / 2)
-        item = self.pdf.add_image(index, pymupdf.Rect(anchor, anchor + (width, height)), path)
+        item = self.pdf.add_image(index, pymupdf.Rect(anchor, anchor + (width, height)), image)
         self.after_change(index)
-        # Switch to edit mode with the new image selected, ready to be moved or resized.
-        self.mode_actions[1].trigger()
+        self.mode_actions[1].trigger()  # edit mode, so the new image can be moved or resized at once
         if item is not None:
             self.view.select_image(item)
 
     # --- signatures --------------------------------------------------------
 
-    def fill_signature_menu(self) -> None:
-        menu = self.signature_menu
+    def fill_signatures(self, menu, on_pick) -> None:
         menu.clear()
         for signature in self.signatures.list():
-            add_menu_entry(menu, self.signatures, signature, lambda _=False, s=signature: self.start_signature(s))
+            add_menu_entry(menu, self.signatures, signature, lambda _=False, s=signature: on_pick(s))
         if not menu.isEmpty():
             menu.addSeparator()
         menu.addAction("Gérer mes signatures…", self.manage_signatures)
+
+    def fill_signature_menu(self) -> None:
+        self.fill_signatures(self.signature_menu, self.start_signature)
+
+    def place_signature(self, index: int, point: pymupdf.Point, signature: Signature) -> None:
+        self.place_image(index, point, str(self.signatures.path(signature)), SIGNATURE_WIDTH, centered=True)
 
     def manage_signatures(self) -> None:
         dialog = SignatureDialog(self, self.signatures)

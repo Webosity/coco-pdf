@@ -106,7 +106,18 @@ def remove(page: pymupdf.Page, item: ImageItem) -> None:
     _rewrite(page, item, None)
 
 
-def insert(page: pymupdf.Page, screen_rect: pymupdf.Rect, image_path: str) -> None:
-    """Insert an image in a rect given in screen (rotated) space, upright on screen."""
-    page.insert_image(screen_rect * page.derotation_matrix, filename=image_path, keep_proportion=True,
-                      rotate=page.rotation)
+def insert(page: pymupdf.Page, screen_rect: pymupdf.Rect, image: str | bytes) -> None:
+    """Insert an image (file path or encoded bytes) in a rect given in screen (rotated) space, upright on screen."""
+    source = {"stream": image} if isinstance(image, bytes) else {"filename": image}
+    page.insert_image(screen_rect * page.derotation_matrix, keep_proportion=True, rotate=page.rotation, **source)
+
+
+def png_bytes(doc: pymupdf.Document, xref: int) -> bytes:
+    """The image as PNG, with its transparency (soft mask) if it has one."""
+    pix = pymupdf.Pixmap(doc, xref)
+    smask = doc.xref_get_key(xref, "SMask")
+    if smask[0] == "xref":
+        pix = pymupdf.Pixmap(pix, pymupdf.Pixmap(doc, int(smask[1].split()[0])))
+    if pix.colorspace and pix.colorspace.n not in (1, 3):
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+    return pix.tobytes("png")

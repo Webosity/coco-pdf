@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__, asset
+from .context_menu import ContextMenuMixin
 from .document import PdfDocument
 from .editing import PDF_FILTER, EditingMixin
 from .icons import icon
@@ -33,7 +34,7 @@ from .viewer import PageView
 MAX_RECENT = 10
 
 
-class MainWindow(EditingMixin, QMainWindow):
+class MainWindow(ContextMenuMixin, EditingMixin, QMainWindow):
     def __init__(self):
         super().__init__()
         self.pdf: PdfDocument | None = None
@@ -57,6 +58,7 @@ class MainWindow(EditingMixin, QMainWindow):
         self.view.page_clicked.connect(self.on_page_clicked)
         self.view.text_edited.connect(self.on_text_edited)
         self.view.image_edited.connect(self.on_image_edited)
+        self.view.context_requested.connect(self.show_context_menu)
         self.view.current_page_changed.connect(self.on_current_page)
         self.thumbs.page_selected.connect(self.view.go_to_page)
         self.thumbs.order_changed.connect(self.reorder)
@@ -101,6 +103,11 @@ class MainWindow(EditingMixin, QMainWindow):
         edit_menu = bar.addMenu("É&dition")
         self.act_undo = self._action(edit_menu, "&Annuler", self.undo, QKeySequence.StandardKey.Undo, sp.SP_ArrowBack)
         self.act_redo = self._action(edit_menu, "&Rétablir", self.redo, "Ctrl+Y", sp.SP_ArrowForward)
+        edit_menu.addSeparator()
+        # Act on the selected image; text being edited handles these keys itself (Qt text widgets take them first).
+        self._action(edit_menu, "Co&uper", lambda: self.cut(), QKeySequence.StandardKey.Cut)
+        self._action(edit_menu, "&Copier", lambda: self.copy(), QKeySequence.StandardKey.Copy)
+        self._action(edit_menu, "C&oller", self.paste, QKeySequence.StandardKey.Paste)
         edit_menu.addSeparator()
         self._action(edit_menu, "Rec&hercher…", self.focus_search, QKeySequence.StandardKey.Find)
         self._action(edit_menu, "Résultat suivant", lambda: self.next_hit(1), "F3")

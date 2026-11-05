@@ -118,3 +118,26 @@ def test_replace_block_keeps_line_pitch(calibri_pdf):
     pdf.replace_block(block, block.text, block.style.with_(bold=True))
     new = pdf.block_at(0, pymupdf.Point(80, 80))
     assert abs(new.style.lineheight - block.style.lineheight) < 0.05
+
+
+@needs_calibri
+def test_replace_block_in_moved_box_writes_text_there(calibri_pdf):
+    pdf = PdfDocument(calibri_pdf)
+    block = pdf.block_at(0, pymupdf.Point(80, 80))
+    pdf.replace_block(block, block.text, block.style, pymupdf.Rect(100, 400, 250, 450))
+    assert (pdf.block_at(0, pymupdf.Point(80, 80)), pdf.block_at(0, pymupdf.Point(110, 405)).style.family) == (
+        None, "Calibri")
+
+
+@needs_calibri
+def test_delete_block_removes_paragraph(calibri_pdf):
+    pdf = PdfDocument(calibri_pdf)
+    pdf.delete_block(pdf.block_at(0, pymupdf.Point(80, 80)))
+    assert pdf.page(0).get_text().strip() == ""
+
+
+def test_copied_image_bytes_can_be_pasted_as_new_image(image_pdf):
+    pdf = PdfDocument(image_pdf)
+    png = pdf.image_png(pdf.image_at(0, pymupdf.Point(100, 80)))
+    pasted = pdf.add_image(0, pymupdf.Rect(200, 200, 320, 260), png)
+    assert (pasted.width, len(pdf.images(0))) == (120, 2)

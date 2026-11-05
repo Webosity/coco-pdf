@@ -8,7 +8,7 @@ from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QTransform
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QToolButton, QWidget
 
-from .pdf_images import ImageItem
+from .pdf_images import ImageItem, png_bytes
 
 HANDLE = 5  # half size of a handle, px
 GRAB = 9  # hit radius around a handle, px
@@ -16,18 +16,6 @@ ROTATE_OFFSET = 28  # distance of the rotation handle above the top edge, px
 BLUE = QColor(30, 120, 255)
 # (sx, sy) of each handle in the image's local frame: corners then side midpoints.
 HANDLES = [(-1, -1), (1, -1), (1, 1), (-1, 1), (0, -1), (1, 0), (0, 1), (-1, 0)]
-
-
-def image_to_qimage(doc: pymupdf.Document, xref: int) -> QImage:
-    pix = pymupdf.Pixmap(doc, xref)
-    smask = doc.xref_get_key(xref, "SMask")
-    if smask[0] == "xref":
-        pix = pymupdf.Pixmap(pix, pymupdf.Pixmap(doc, int(smask[1].split()[0])))
-    if pix.colorspace and pix.colorspace.n not in (1, 3):
-        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
-    fmt = QImage.Format.Format_RGBA8888 if pix.alpha else (
-        QImage.Format.Format_Grayscale8 if pix.n == 1 else QImage.Format.Format_RGB888)
-    return QImage(pix.samples, pix.width, pix.height, pix.stride, fmt).copy()
 
 
 class ImageSelection(QWidget):
@@ -42,7 +30,7 @@ class ImageSelection(QWidget):
         self.item, self.zoom = item, zoom
         self.rotation, self.rotation_matrix, self.derotation_matrix = page.rotation, page.rotation_matrix, \
             page.derotation_matrix
-        self.preview = image_to_qimage(page.parent, item.xref)
+        self.preview = QImage.fromData(png_bytes(page.parent, item.xref))
         c = item.center * page.rotation_matrix
         self.center = QPointF(c.x * zoom, c.y * zoom)
         self.w, self.h = item.width * zoom, item.height * zoom

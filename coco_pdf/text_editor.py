@@ -1,7 +1,7 @@
 """In-place text editing: a text box laid over the paragraph, with a floating style toolbar above it."""
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QKeySequence, QTextBlockFormat, QTextCursor
 from PySide6.QtWidgets import (
     QColorDialog,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import fonts
+from .box_handles import BoxHandles
 from .pdf_text import TextStyle
 
 ALIGNMENTS = [("Gauche", Qt.AlignmentFlag.AlignLeft), ("Centré", Qt.AlignmentFlag.AlignHCenter),
@@ -35,7 +36,7 @@ def _tool_button(text: str, tip: str, checkable: bool = False) -> QToolButton:
 class InlineTextEditor(QObject):
     """Lives on a page widget; emits committed(text, style) or cancelled()."""
 
-    committed = Signal(str, object)
+    committed = Signal(str, object, bool)  # text, style, box moved or resized
     cancelled = Signal()
 
     def __init__(self, page_widget: QWidget, rect: QRectF, text: str, style: TextStyle, zoom: float):
@@ -46,6 +47,8 @@ class InlineTextEditor(QObject):
         self.style = style
         self.min_height = max(rect.height(), style.size * style.lineheight * zoom)
         self.closed = False
+        self.box_changed = False
+        self.handles: BoxHandles | None = None
 
         self.editor = QTextEdit(page_widget)
         self.editor.setAcceptRichText(False)
@@ -58,6 +61,7 @@ class InlineTextEditor(QObject):
         self.editor.installEventFilter(self)
 
         self.toolbar = self._build_toolbar()
+        self.handles = BoxHandles(self.editor, self._on_box_dragged)
         self._apply_style()
         self.editor.document().contentsChanged.connect(self._fit_height)
         self.editor.show()
@@ -137,7 +141,8 @@ class InlineTextEditor(QObject):
         self.editor.setFont(font)
         self.editor.document().setDefaultFont(font)
         color = QColor.fromRgbF(*style.color).name()
-        self.editor.setStyleSheet(f"QTextEdit {{ background: white; color: {color}; }}")
+        self.editor.setStyleSheet(f"QTextEdit {{ background: white; color: {color}; "
+                                  f"border: 1px dashed #1e78ff; }}")
         self.color.setStyleSheet(f"color: {color}; font-weight: bold; border-bottom: 3px solid {color};")
         exact = fonts.resolve(style.family, style.bold, style.italic).exact
         self.warning.setText("" if exact else "⚠ non installée")
@@ -157,10 +162,20 @@ class InlineTextEditor(QObject):
         height = max(self.min_height, self.editor.document().size().height() + 4)
         self.editor.resize(self.editor.width(), int(height))
         self._place_toolbar()
+        if self.handles:
+            self.handles.place()
+
+    def _on_box_dragged(self, geometry: QRect, user_height: int | None) -> None:
+        self.box_changed = True
+        if user_height is not None:
+            self.min_height = user_height
+        self.editor.setGeometry(geometry.x(), geometry.y(), geometry.width(), self.editor.height())
+        self._fit_height()  # the text reflows in the new width; height follows the content
+        self.editor.setFocus()
 
     def _place_toolbar(self) -> None:
         bar, box = self.toolbar, self.editor.geometry()
-        y = box.top() - bar.height() - 6
+        y = box.top() - bar.height() - 22  # clear of the move grip above the box's top-left corner
         if y < 0:
             y = box.bottom() + 6
         x = min(max(box.left(), 0), max(self.page_widget.width() - bar.width(), 0))
@@ -176,10 +191,10 @@ class InlineTextEditor(QObject):
         if self.closed:
             return
         self._close()
-        if (self.text(), self.style) == self.original:
+        if (self.text(), self.style) == self.original and not self.box_changed:
             self.cancelled.emit()
         else:
-            self.committed.emit(self.text(), self.style)
+            self.committed.emit(self.text(), self.style, self.box_changed)
 
     def cancel(self) -> None:
         if not self.closed:
@@ -188,6 +203,7 @@ class InlineTextEditor(QObject):
 
     def _close(self) -> None:
         self.closed = True
+        self.handles.close()
         self.editor.hide()
         self.toolbar.hide()
         self.editor.deleteLater()

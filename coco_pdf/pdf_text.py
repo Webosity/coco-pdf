@@ -120,9 +120,14 @@ def write(page: pymupdf.Page, box: pymupdf.Rect, text: str, style: TextStyle, ro
         raise ValueError("Le texte ne tient pas dans la page")
 
 
-def replace_block(page: pymupdf.Page, block: TextBlock, text: str, style: TextStyle) -> None:
+def replace_block(page: pymupdf.Page, block: TextBlock, text: str, style: TextStyle,
+                  screen_rect: pymupdf.Rect | None = None) -> None:
+    """Rewrite the paragraph in place, or in screen_rect when the box was moved or resized."""
     erase(page, block.bbox)
-    if text.strip():
+    if screen_rect is not None:
+        if text.strip():
+            add_box(page, screen_rect, text, style)
+    elif text.strip():
         # Down to the bottom of the page so a longer paragraph can grow instead of being cut.
         bottom = unrotated_rect(page).y1
         write(page, pymupdf.Rect(block.bbox.x0, block.bbox.y0, block.bbox.x1, bottom), text, style)
