@@ -71,9 +71,25 @@ def _block_from_dict(page_index: int, block: dict) -> TextBlock | None:
     return TextBlock(page_index, bbox, _join_lines(lines, bbox.width), style, main["font"])
 
 
+def _split_columns(block: dict) -> list[dict]:
+    """MuPDF may put side-by-side texts (sender and recipient addresses) in one block: a line that does
+    not overlap the previous one horizontally starts a new paragraph. Indented list lines still overlap."""
+    groups: list[list[dict]] = []
+    for line in block.get("lines", []):
+        r = pymupdf.Rect(line["bbox"])
+        if groups:
+            previous = pymupdf.Rect(groups[-1][-1]["bbox"])
+            if min(previous.x1, r.x1) > max(previous.x0, r.x0):
+                groups[-1].append(line)
+                continue
+        groups.append([line])
+    return [{**block, "lines": lines} for lines in groups]
+
+
 def extract_blocks(page: pymupdf.Page) -> list[TextBlock]:
     data = page.get_text("dict", flags=pymupdf.TEXTFLAGS_TEXT)
-    blocks = (_block_from_dict(page.number, b) for b in data["blocks"] if b["type"] == 0)
+    blocks = (_block_from_dict(page.number, part) for b in data["blocks"] if b["type"] == 0
+              for part in _split_columns(b))
     return [b for b in blocks if b is not None]
 
 

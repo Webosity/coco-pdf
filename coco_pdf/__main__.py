@@ -4,7 +4,7 @@ from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from coco_pdf import asset
+from coco_pdf import asset, theme
 from coco_pdf.main_window import MainWindow
 
 
@@ -13,6 +13,7 @@ def main() -> int:
     app.setApplicationName("Coco PDF")
     app.setOrganizationName("Digital Rhapsody")
     app.setWindowIcon(QIcon(str(asset("coco-pdf.ico"))))
+    theme.apply(app)  # before any widget: toolbar icons are tinted from the palette
     # French labels for Qt's standard buttons and dialogs (Cancel, Yes/No, file dialogs).
     translator = QTranslator(app)
     translations = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)

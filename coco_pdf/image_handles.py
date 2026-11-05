@@ -9,6 +9,7 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPen, QTransform
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QToolButton, QWidget
 
 from .pdf_images import ImageItem, png_bytes
+from .theme import floating_panel
 
 HANDLE = 5  # half size of a handle, px
 GRAB = 9  # hit radius around a handle, px
@@ -185,15 +186,14 @@ class ImageSelection(QWidget):
 
     def _build_toolbar(self) -> QFrame:
         bar = QFrame(self)
-        bar.setStyleSheet("QFrame { background: palette(window); border: 1px solid palette(mid); "
-                          "border-radius: 6px; } QToolButton { border: none; padding: 3px 6px; }")
+        floating_panel(bar)
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(2)
         for text, tip, slot in (("⟲ 90°", "Pivoter à gauche", lambda: self._rotate_by(-90)),
                                 ("⟳ 90°", "Pivoter à droite", lambda: self._rotate_by(90)),
                                 ("0°", "Remettre droit", lambda: self._rotate_by(-self.angle)),
-                                ("🗑", "Supprimer l'image (Suppr)", self.deleted.emit)):
+                                ("🗑 Supprimer", "Supprimer l'image (Suppr)", self.deleted.emit)):
             button = QToolButton(text=text, toolTip=tip)
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             button.clicked.connect(slot)

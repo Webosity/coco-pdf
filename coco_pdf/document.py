@@ -246,27 +246,3 @@ class PdfDocument:
                     value = widget.on_state() if value else "Off"
                 widget.field_value = value
                 widget.update()
-
-    # --- OCR ---------------------------------------------------------------
-
-    def ocr_pages(self, indices: list[int], language: str = "fra+eng") -> int:
-        """Add an invisible, searchable text layer from Tesseract. Returns the number of words added."""
-        self.checkpoint()
-        added = 0
-        for i in indices:
-            page = self.doc[i]
-            textpage = page.get_textpage_ocr(language=language, dpi=300, full=True)
-            for x0, y0, x1, y1, word, *_ in page.get_text("words", textpage=textpage):
-                width = pymupdf.get_text_length(word, "helv", 1)
-                size = min(y1 - y0, (x1 - x0) / width) if width else y1 - y0
-                page.insert_text((x0, y1 - (y1 - y0) * 0.2), word, fontname="helv", fontsize=size, render_mode=3)
-                added += 1
-        return added
-
-
-def tesseract_available() -> bool:
-    try:
-        pymupdf.get_tessdata()
-        return True
-    except RuntimeError:
-        return False

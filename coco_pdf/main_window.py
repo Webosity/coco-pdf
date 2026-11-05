@@ -19,14 +19,16 @@ from PySide6.QtWidgets import (
     QStyle,
     QToolBar,
     QToolButton,
+    QVBoxLayout,
     QWidget,
 )
 
-from . import __version__, asset
+from .about_dialog import AboutDialog
 from .context_menu import ContextMenuMixin
 from .document import PdfDocument
 from .editing import PDF_FILTER, EditingMixin
 from .icons import icon
+from .ocr_ui import OcrMixin, ScanBanner
 from .signatures import SignatureStore
 from .thumbnails import ThumbnailList
 from .viewer import PageView
@@ -34,7 +36,7 @@ from .viewer import PageView
 MAX_RECENT = 10
 
 
-class MainWindow(ContextMenuMixin, EditingMixin, QMainWindow):
+class MainWindow(OcrMixin, ContextMenuMixin, EditingMixin, QMainWindow):
     def __init__(self):
         super().__init__()
         self.pdf: PdfDocument | None = None
@@ -45,8 +47,14 @@ class MainWindow(ContextMenuMixin, EditingMixin, QMainWindow):
 
         self.view = PageView()
         self.thumbs = ThumbnailList()
+        self.banner = ScanBanner(self.make_editable)
         central = QWidget()
-        layout = QHBoxLayout(central)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self.banner)
+        layout = QHBoxLayout()
+        outer.addLayout(layout, 1)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self.thumbs)
@@ -151,7 +159,7 @@ class MainWindow(ContextMenuMixin, EditingMixin, QMainWindow):
         tools_menu.addMenu(self.signature_menu)
         tools_menu.addSeparator()
         self._action(tools_menu, "Remplir le &formulaire…", self.fill_form)
-        self._action(tools_menu, "Reconnaissance de texte (&OCR)…", self.run_ocr)
+        self._action(tools_menu, "Rendre le texte &modifiable (scan, OCR)…", self.make_editable)
 
         help_menu = bar.addMenu("&?")
         self._action(help_menu, "À &propos", self.about, needs_doc=False)
@@ -260,6 +268,7 @@ class MainWindow(ContextMenuMixin, EditingMixin, QMainWindow):
         self.settings.setValue("last_dir", str(Path(path).parent))
         self._add_recent(str(Path(path).resolve()))
         self.update_state()
+        self.check_scanned()
 
     def save(self) -> bool:
         if self.pdf.path is None:
@@ -368,10 +377,7 @@ class MainWindow(ContextMenuMixin, EditingMixin, QMainWindow):
         painter.end()
 
     def about(self) -> None:
-        logo = asset("logo.png").as_uri()
-        QMessageBox.about(self, "Coco PDF", f'<p align="center"><img src="{logo}" width="160"></p>'
-                                            f"<b>Coco PDF</b> {__version__}<br>Lecteur et éditeur PDF.<br>"
-                                            f"Moteur PyMuPDF {pymupdf.VersionBind}.")
+        AboutDialog(self).exec()
 
     # --- Qt events ---------------------------------------------------------
 

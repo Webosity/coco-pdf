@@ -1,13 +1,14 @@
-; Inno Setup script. Build after PyInstaller: iscc installer.iss  ->  dist\CocoPDF-Setup-<version>.exe
+﻿; Inno Setup script. Build after PyInstaller: iscc installer.iss  ->  dist\CocoPDF-Setup-<version>.exe
 #define AppName "Coco PDF"
-#define AppVersion "0.4.1"
+#define AppVersion "0.6.0"
 #define AppExe "CocoPDF.exe"
 
 [Setup]
 AppId={{6F1C3B52-8E0A-4C8F-9A5E-C0C0BDF00001}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppPublisher=Digital Rhapsody
+AppPublisher=SARL Digital Rhapsody
+AppCopyright=SARL Digital Rhapsody, 31700 Blagnac, France
 DefaultDirName={autopf}\Coco PDF
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -21,7 +22,8 @@ OutputDir=dist
 OutputBaseFilename=CocoPDF-Setup-{#AppVersion}
 SetupIconFile=assets\coco-pdf.ico
 UninstallDisplayIcon={app}\{#AppExe}
-WizardImageFile=assets\wizard-large.bmp
+; Two sizes: the second one is used on high-DPI screens.
+WizardImageFile=assets\wizard-large.bmp,assets\wizard-large-2x.bmp
 WizardSmallImageFile=assets\wizard-small.bmp
 WizardStyle=modern
 Compression=lzma2/max
@@ -31,6 +33,9 @@ CloseApplications=yes
 
 [Languages]
 Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
+
+[Messages]
+WelcomeLabel2=Cet assistant va installer [name/ver] sur votre ordinateur.%n%nÉditeur : SARL Digital Rhapsody, 31700 Blagnac, France%n%n« Coco, c'est ma maman, et à force de la voir galérer avec ses différents pdfs, j'ai décidé qu'il était temps que je lui crée un logiciel pour elle, pour son utilisation, puis aussi pour mon utilisation des pdfs... et finalement Coco PDF a vu le jour. Merci Maman :) »
 
 [Tasks]
 Name: "desktopicon"; Description: "Créer une icône sur le Bureau"; GroupDescription: "Raccourcis :"

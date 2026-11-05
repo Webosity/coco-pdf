@@ -6,7 +6,8 @@ UNUSED = ("opengl32sw.dll", "Qt6Quick", "Qt6Qml", "Qt6Pdf", "Qt6Network", "Qt6Op
 
 a = Analysis(
     ["coco_pdf/__main__.py"],
-    datas=[("assets/coco-pdf.ico", "assets"), ("assets/logo.png", "assets")],
+    datas=[("assets/coco-pdf.ico", "assets"), ("assets/logo.png", "assets"),
+           ("assets/coco-animation.gif", "assets"), ("assets/tessdata", "assets/tessdata")],
     excludes=["tkinter", "numpy", "PIL", "PySide6.QtNetwork", "PySide6.QtQml", "PySide6.QtQuick"],
 )
 a.binaries = [b for b in a.binaries if not any(name in b[0] for name in UNUSED)]

@@ -4,12 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pymupdf
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QImageReader
-from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 
 from .dialogs import FormDialog
-from .document import tesseract_available
 from .pdf_images import ImageItem
 from .pdf_text import TextStyle
 from .signature_dialog import SignatureDialog, add_menu_entry
@@ -183,26 +181,6 @@ class EditingMixin:
         if dialog.exec():
             self.pdf.set_field_values(dialog.values())
             self.after_structure_change()
-
-    def run_ocr(self) -> None:
-        if not tesseract_available():
-            QMessageBox.information(
-                self, "OCR",
-                "La reconnaissance de texte nécessite Tesseract OCR.\n\n"
-                "Installe-le (par exemple « winget install UB-Mannheim.TesseractOCR » avec la langue "
-                "française), puis relance Coco PDF.")
-            return
-        pages = self.target_pages()
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            words = self.pdf.ocr_pages(pages)
-        except (RuntimeError, OSError, ValueError) as error:
-            QMessageBox.warning(self, "OCR", f"Échec de l'OCR : {error}")
-            return
-        finally:
-            QApplication.restoreOverrideCursor()
-        self.after_structure_change()
-        self.statusBar().showMessage(f"OCR : {words} mots reconnus sur {len(pages)} page(s)", 6000)
 
     # --- helpers -----------------------------------------------------------
 

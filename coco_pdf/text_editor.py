@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QKeySequence, QTextBlockFormat, QTextCursor
+from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence, QPainter, QPixmap, QTextBlockFormat, QTextCursor
 from PySide6.QtWidgets import (
     QColorDialog,
     QComboBox,
@@ -18,13 +18,29 @@ from PySide6.QtWidgets import (
 from . import fonts
 from .box_handles import BoxHandles
 from .pdf_text import TextStyle
+from .theme import floating_panel, set_text_color
 
 ALIGNMENTS = [("Gauche", Qt.AlignmentFlag.AlignLeft), ("Centré", Qt.AlignmentFlag.AlignHCenter),
               ("Droite", Qt.AlignmentFlag.AlignRight), ("Justifié", Qt.AlignmentFlag.AlignJustify)]
-TOOLBAR_STYLE = """
-QFrame#textToolbar { background: palette(window); border: 1px solid palette(mid); border-radius: 6px; }
-QToolButton { min-width: 26px; min-height: 24px; }
-"""
+
+
+def _styled(font: QFont, bold: bool = False, italic: bool = False) -> QFont:
+    font.setBold(bold)
+    font.setItalic(italic)
+    return font
+
+
+def _color_icon(color: str) -> QIcon:
+    """'A' over a bar of the current text colour."""
+    pixmap = QPixmap(20, 20)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setFont(_styled(QFont("Segoe UI", 10), bold=True))
+    painter.setPen(QColor("#1f1f1f"))
+    painter.drawText(QRect(0, -2, 20, 18), Qt.AlignmentFlag.AlignCenter, "A")
+    painter.fillRect(QRect(2, 15, 16, 4), QColor(color))
+    painter.end()
+    return QIcon(pixmap)
 
 
 def _tool_button(text: str, tip: str, checkable: bool = False) -> QToolButton:
@@ -72,8 +88,8 @@ class InlineTextEditor(QObject):
     # --- toolbar -----------------------------------------------------------
 
     def _build_toolbar(self) -> QFrame:
-        bar = QFrame(self.page_widget, objectName="textToolbar")
-        bar.setStyleSheet(TOOLBAR_STYLE)
+        bar = QFrame(self.page_widget)
+        floating_panel(bar)
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(4)
@@ -92,13 +108,13 @@ class InlineTextEditor(QObject):
         self.size.valueChanged.connect(lambda v: self._update(size=v))
         self.bold = _tool_button("G", "Gras (Ctrl+B)", checkable=True)
         self.bold.setChecked(self.style.bold)
-        self.bold.setStyleSheet("font-weight: bold;")
+        self.bold.setFont(_styled(self.bold.font(), bold=True))
         self.bold.toggled.connect(lambda v: self._update(bold=v))
         self.italic = _tool_button("I", "Italique (Ctrl+I)", checkable=True)
         self.italic.setChecked(self.style.italic)
-        self.italic.setStyleSheet("font-style: italic;")
+        self.italic.setFont(_styled(self.italic.font(), italic=True))
         self.italic.toggled.connect(lambda v: self._update(italic=v))
-        self.color = _tool_button("A", "Couleur du texte")
+        self.color = _tool_button("", "Couleur du texte")
         self.color.clicked.connect(self._pick_color)
         self.align = QComboBox(toolTip="Alignement")
         self.align.addItems([label for label, _ in ALIGNMENTS])
@@ -106,9 +122,10 @@ class InlineTextEditor(QObject):
         self.align.currentIndexChanged.connect(lambda v: self._update(align=v))
         self.warning = QLabel(toolTip="Cette police n'est pas installée sur ce PC : une police standard proche "
                                       "sera utilisée. Installe-la pour conserver le rendu exact.")
-        self.warning.setStyleSheet("color: #c77700;")
+        set_text_color(self.warning, "#b45309")
         ok = _tool_button("✓", "Valider (Ctrl+Entrée)")
-        ok.setStyleSheet("color: #1a8f3c; font-weight: bold;")
+        ok.setFont(_styled(ok.font(), bold=True))
+        set_text_color(ok, "#15803d")
         ok.clicked.connect(self.commit)
         cancel = _tool_button("✕", "Annuler (Échap)")
         cancel.clicked.connect(self.cancel)
@@ -143,7 +160,7 @@ class InlineTextEditor(QObject):
         color = QColor.fromRgbF(*style.color).name()
         self.editor.setStyleSheet(f"QTextEdit {{ background: white; color: {color}; "
                                   f"border: 1px dashed #1e78ff; }}")
-        self.color.setStyleSheet(f"color: {color}; font-weight: bold; border-bottom: 3px solid {color};")
+        self.color.setIcon(_color_icon(color))
         exact = fonts.resolve(style.family, style.bold, style.italic).exact
         self.warning.setText("" if exact else "⚠ non installée")
         self.warning.setVisible(not exact)

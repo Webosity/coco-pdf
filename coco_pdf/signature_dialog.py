@@ -49,7 +49,8 @@ class MenuEntry(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
         self.setObjectName("entry")
-        self.setStyleSheet("#entry { padding: 2px; border-radius: 4px; } #entry:hover { background: palette(highlight); }")
+        self.setStyleSheet("#entry { padding: 2px; border-radius: 4px; } #entry:hover { background: palette(highlight); }"
+                           "#entry:hover QLabel { color: palette(highlighted-text); }")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 4, 12, 4)
         preview = QLabel()

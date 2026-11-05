@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pymupdf
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QPolygonF
+from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from .document import PdfDocument
@@ -15,6 +15,14 @@ from .text_editor import InlineTextEditor
 PAGE_GAP = 12
 NEW_TEXT_WIDTH = 250  # pt
 UNIT_SQUARE = [pymupdf.Point(0, 0), pymupdf.Point(1, 0), pymupdf.Point(1, 1), pymupdf.Point(0, 1)]
+
+
+BACKDROP = "#525659"  # grey around the pages
+
+
+def _backdrop(palette: QPalette) -> QPalette:
+    palette.setColor(QPalette.ColorRole.Window, QColor(BACKDROP))
+    return palette
 
 
 def render(page: pymupdf.Page, zoom: float) -> QPixmap:
@@ -124,7 +132,7 @@ class PageView(QScrollArea):
         self.image_session: ImageSelection | None = None
         self.setWidgetResizable(True)
         self.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.setStyleSheet("QScrollArea { background: #525659; }")
+        self.setPalette(_backdrop(self.palette()))
         self.verticalScrollBar().valueChanged.connect(self._emit_current_page)
 
     def set_document(self, pdf: PdfDocument | None) -> None:
@@ -135,7 +143,10 @@ class PageView(QScrollArea):
         """Recreate page widgets (after page count, order or rotation changes)."""
         self.close_overlays(commit=False)
         container = QWidget()
-        container.setStyleSheet("background: #525659;")
+        # A palette, not a style sheet: a style sheet here would cascade to every widget laid over the
+        # pages (editing toolbars, their combo boxes...) and paint them all dark grey.
+        container.setAutoFillBackground(True)
+        container.setPalette(_backdrop(container.palette()))
         layout = QVBoxLayout(container)
         layout.setSpacing(PAGE_GAP)
         layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
