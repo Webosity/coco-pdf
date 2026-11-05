@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from .document import PdfDocument
 from .image_handles import ImageSelection
+from .pdf_images import ImageItem
 from .pdf_text import TextStyle
 from .text_editor import InlineTextEditor
 
@@ -73,15 +74,13 @@ class PageWidget(QWidget):
             painter.drawPolygon(QPolygonF([self.to_screen(p) for p in self.hover]))
 
     def _shape_under(self, point: pymupdf.Point) -> list[pymupdf.Point] | None:
-        pdf = self.view.pdf
-        block = pdf.block_at(self.index, point)
-        if block:
-            r = block.bbox + (-2, -2, 2, 2)
-            return [r.tl, r.tr, r.br, r.bl]
-        image = pdf.image_at(self.index, point)
-        if image:
-            m = image.matrix()
+        item = self.view.pdf.item_at(self.index, point)
+        if isinstance(item, ImageItem):
+            m = item.matrix()
             return [p * m for p in UNIT_SQUARE]
+        if item:
+            r = item.bbox + (-2, -2, 2, 2)
+            return [r.tl, r.tr, r.br, r.bl]
         return None
 
     def mouseMoveEvent(self, event) -> None:
@@ -175,12 +174,11 @@ class PageView(QScrollArea):
         widget = self.pages[index]
         widget.hover = None
         if self.mode == "edit":
-            block = self.pdf.block_at(index, point)
-            image = None if block else self.pdf.image_at(index, point)
-            if block:
-                self.edit_block(block)
-            elif image:
-                self.select_image(image)
+            item = self.pdf.item_at(index, point)
+            if isinstance(item, ImageItem):
+                self.select_image(item)
+            elif item:
+                self.edit_block(item)
         elif self.mode == "add_text":
             self.new_text_at(index, point)
         else:

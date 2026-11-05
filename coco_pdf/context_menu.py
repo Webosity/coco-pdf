@@ -31,9 +31,9 @@ class ContextMenuMixin:
     # --- right-click menu --------------------------------------------------
 
     def show_context_menu(self, index: int, point: pymupdf.Point, global_pos: QPoint) -> None:
-        block = self.pdf.block_at(index, point)
-        image = None if block else self.pdf.image_at(index, point)
-        target = block or image
+        target = self.pdf.item_at(index, point)
+        image = target if isinstance(target, ImageItem) else None
+        block = None if image else target
         menu = QMenu(self)
 
         menu.addAction(icon("add_text"), "Ajouter une zone de texte ici", lambda: self.view.new_text_at(index, point))

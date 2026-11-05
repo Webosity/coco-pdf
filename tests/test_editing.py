@@ -5,6 +5,7 @@ import pytest
 
 from coco_pdf import fonts
 from coco_pdf.document import PdfDocument
+from coco_pdf.pdf_images import ImageItem
 
 CALIBRI = Path(r"C:\Windows\Fonts\calibri.ttf")
 needs_calibri = pytest.mark.skipif(not CALIBRI.exists(), reason="Calibri not installed")
@@ -141,3 +142,20 @@ def test_copied_image_bytes_can_be_pasted_as_new_image(image_pdf):
     png = pdf.image_png(pdf.image_at(0, pymupdf.Point(100, 80)))
     pasted = pdf.add_image(0, pymupdf.Rect(200, 200, 320, 260), png)
     assert (pasted.width, len(pdf.images(0))) == (120, 2)
+
+
+def test_item_at_on_image_over_paragraph_returns_image(image_pdf):
+    pdf = PdfDocument(image_pdf)
+    pdf.page(0).insert_textbox(pymupdf.Rect(40, 40, 380, 140), "Lu et approuvé " * 20, fontsize=11)
+    pdf.checkpoint()  # forget cached layout
+    assert isinstance(pdf.item_at(0, pymupdf.Point(100, 80)), ImageItem)
+
+
+def test_images_found_on_page_with_image_inside_form_xobject(tmp_path, image_pdf):
+    logo = pymupdf.open(image_pdf)  # page 0 has an image: drawn below as a form XObject
+    doc = pymupdf.open()
+    doc.new_page(width=400, height=400).show_pdf_page(pymupdf.Rect(0, 0, 200, 200), logo, 0)
+    doc.save(tmp_path / "form.pdf")
+    pdf = PdfDocument(tmp_path / "form.pdf")
+    item = pdf.add_image(0, pymupdf.Rect(250, 250, 350, 300), tmp_path / "img.png")
+    assert (item is not None, len(pdf.images(0))) == (True, 1)

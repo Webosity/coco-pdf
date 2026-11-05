@@ -190,6 +190,15 @@ class PdfDocument:
         # Topmost first.
         return next((i for i in reversed(self.images(page_index)) if i.contains(point)), None)
 
+    def item_at(self, page_index: int, point: pymupdf.Point) -> TextBlock | ImageItem | None:
+        """Paragraph or image under the point. When both, the smaller one wins: a signature laid over a
+        paragraph is picked, while text printed on a large background image stays editable."""
+        block = self.block_at(page_index, point)
+        image = self.image_at(page_index, point)
+        if block and image:
+            return image if image.width * image.height < block.bbox.width * block.bbox.height else block
+        return block or image
+
     def add_image(self, page_index: int, screen_rect: pymupdf.Rect, image: str | Path | bytes) -> ImageItem | None:
         """Insert an image (file path or encoded bytes) and return it so it can be selected right away."""
         self.checkpoint()

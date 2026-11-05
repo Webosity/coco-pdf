@@ -56,26 +56,62 @@ def _from_transform(page_index: int, xref: int, name: str, k: int, t: pymupdf.Ma
     return ImageItem(page_index, xref, name, k, center, width, height, angle % 360, flipped)
 
 
+REFERENCE = re.compile(r"/([^\s/<>\[\]()]+)\s+(\d+)\s+0\s+R")
+MAX_DEPTH = 8
+
+
+def _xobjects(doc: pymupdf.Document, owner: int) -> dict[str, int]:
+    """Resource name -> xref of the XObjects (images and forms) a form XObject can draw."""
+    kind, value = doc.xref_get_key(owner, "Resources/XObject")
+    if kind == "xref":
+        value = doc.xref_object(int(value.split()[0]))
+    return {name: int(x) for name, x in REFERENCE.findall(value)} if kind in ("dict", "xref") else {}
+
+
+def _images_in_form(doc: pymupdf.Document, form: int, depth: int = 0) -> int:
+    """How many image placements a form XObject draws, nested forms included (in get_image_info's sense)."""
+    if depth > MAX_DEPTH:
+        return 0
+    names = _xobjects(doc, form)
+    if not names:
+        return 0
+    count = 0
+    for match in _do_pattern(*names).finditer(doc.xref_stream(form) or b""):
+        xref = names[match.group(1).decode()]
+        if doc.xref_get_key(xref, "Subtype")[1] == "/Image":
+            count += 1
+        else:
+            count += _images_in_form(doc, xref, depth + 1)
+    return count
+
+
 def list_images(page: pymupdf.Page) -> list[ImageItem]:
-    """Images drawn directly by the page content (not inside a form XObject), topmost last."""
+    """Images drawn directly by the page content, topmost last. Images inside form XObjects (often a
+    logo in a header) are not movable, but no longer prevent the others from being found."""
+    doc = page.parent
     # Resource name -> xref. One image can be registered under several names (e.g. inserted twice).
-    xref_of = {img[7]: img[0] for img in page.get_images(full=True) if img[-1] == 0}
-    if not xref_of:
+    image_xref = {img[7]: img[0] for img in page.get_images(full=True) if img[-1] == 0}
+    form_xref = {f[1]: f[0] for f in page.get_xobjects() if f[2] == 0}
+    if not image_xref:
         return []
-    used = [m.group(1).decode() for m in _do_pattern(*xref_of).finditer(_content(page))]
     # get_image_info lists placements in drawing order, but its xrefs are guessed from the image digest
-    # (identical images all get the same one), so placements are matched to the "Do" operators by order.
-    # Images nested in form XObjects break that order: such pages get no movable images.
+    # (identical images all get the same one): placements are matched to the "Do" operators by order,
+    # a form standing for all the images it draws.
     infos = page.get_image_info()
-    if len(used) != len(infos):
-        return []
-    items, seen = [], {}
-    for name, info in zip(used, infos):
-        xref = xref_of[name]
+    items, seen, position = [], {}, 0
+    for match in _do_pattern(*image_xref, *form_xref).finditer(_content(page)):
+        name = match.group(1).decode()
+        if name not in image_xref:
+            position += _images_in_form(doc, form_xref[name])
+            continue
+        if position >= len(infos):
+            return []  # inconsistent count (e.g. inline images): better none than a wrong one
+        xref = image_xref[name]
         k = seen.get(xref, 0)
         seen[xref] = k + 1
-        items.append(_from_transform(page.number, xref, name, k, pymupdf.Matrix(info["transform"])))
-    return items
+        items.append(_from_transform(page.number, xref, name, k, pymupdf.Matrix(infos[position]["transform"])))
+        position += 1
+    return items if position == len(infos) else []
 
 
 def _rewrite(page: pymupdf.Page, item: ImageItem, new: ImageItem | None) -> None:
